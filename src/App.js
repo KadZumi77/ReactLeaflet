@@ -1,7 +1,11 @@
 import React, {useState, useRef, useEffect, useCallback} from 'react';
-import { MapContainer, TileLayer, LayersControl, CircleMarker, Popup, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, LayersControl, Marker, Popup, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import Papa from 'papaparse';
+import L from 'leaflet';
+import MarkerClusterGroup from "react-leaflet-markercluster";
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 
 const { BaseLayer } = LayersControl;
 
@@ -28,6 +32,7 @@ function App() {
     const [statuses, setStatuses] = useState({});
     const [uploadedFileNames, setUploadedFileNames] = useState([]);
     const [installationDates, setInstallationDates] = useState({});
+    const [openPopupId, setOpenPopupId] = useState(null);
 
     const handleFileUpload = useCallback((event) => {
         const files = Array.from(event.target.files); // Get an array of files
@@ -60,10 +65,8 @@ function App() {
             });
         }))
             .then(allParsedPoints => {
-                // Flatten the array of arrays into a single array of points
                 const flattenedPoints = allParsedPoints.flat();
 
-                // Assign IDs and update state
                 const numberedPoints = flattenedPoints.map((p, index) => ({
                     id: nextId.current + index,
                     lat: p.lat,
@@ -71,7 +74,7 @@ function App() {
                     status: p.status,
                     installationDate: p.installationDate,
                 }));
-                nextId.current += numberedPoints.length; // Update nextId
+                nextId.current += numberedPoints.length;
 
                 setPoints(prevPoints => [...prevPoints, ...numberedPoints]);
 
@@ -137,7 +140,13 @@ function App() {
                 return point;
             })
         );
-    }, []); // The empty dependency array means this callback is only created once.
+    }, []);
+
+    const isFullYearEntered = (dateStr) => {
+        if (!dateStr || dateStr.length !== 10) return false;
+        const regex = /^\d{4}-\d{2}-\d{2}$/;
+        return regex.test(dateStr);
+    };
 
 
     const savePointsToCSV = () => {
@@ -152,7 +161,7 @@ function App() {
                 LAT: p.lat,
                 LNG: p.lng,
                 STATUS: p.status,
-                INSTALLATION_DATE: p.installationDate || '', // Save installation date to CSV
+                INSTALLATION_DATE: p.installationDate || '',
             }))
         }, { delimiter: ';' });
 
@@ -169,7 +178,6 @@ function App() {
 
     return (
         <div className="App" style={{ height: '100vh', width: '100vw', position: 'relative' }}>
-            {/* Color Explanation */}
             <div style={{
                 position: 'absolute', top: 10, left: 50, zIndex: 1000, backgroundColor: 'white', padding: '8px',
                 border: '1px solid #ccc', borderRadius: '4px', display: 'flex', gap: '16px'
@@ -221,7 +229,7 @@ function App() {
                 </button>
             </div>
 
-            <MapContainer center={position} zoom={zoom} scrollWheelZoom={true} style={{ height: '100%', width: '100%' }}>
+            <MapContainer center={position} zoom={zoom} maxZoom={18} scrollWheelZoom={true} style={{ height: '100%', width: '100%' }}>
                 <LayersControl position="topright">
                     <BaseLayer checked name="OpenStreetMap">
                         <TileLayer
@@ -247,53 +255,89 @@ function App() {
 
                 <AddPointOnClick addPoint={addPoint} active={addMode} />
 
-                {points.map(point => (
-                    <CircleMarker
-                        key={point.id}
-                        center={[point.lat, point.lng]}
-                        radius={6}
-                        pathOptions={{
-                            color:
-                                point.status === 'installed' ? 'green' :
-                                    point.status === 'in_progress' ? 'orange' :
-                                        'red',
-                            fillColor:
-                                point.status === 'installed' ? 'green' :
-                                    point.status === 'in_progress' ? 'orange' :
-                                        'red',
-                            fillOpacity: 1
-                        }}
-                    >
-                        <Popup>
-                            Точка #{point.id}<br />
-                            Широта: {point.lat.toFixed(6)}<br />
-                            Долгота: {point.lng.toFixed(6)}<br />
-                            Статус:
-                            <select
-                                value={point.status}
-                                onChange={(e) => handleStatusChange(point.id, e.target.value)}
-                            >
-                                <option value="not_installed">Не установлена</option>
-                                <option value="in_progress">В процессе установки</option>
-                                <option value="installed">Установлена</option>
-                            </select>
+                <MarkerClusterGroup
+                    maxClusterRadius={40}>
+                    {points.map(point => {
+                        // Создадим иконку с нужным цветом
+                        const icon = L.divIcon({
+                            html: `<div style="
+                background-color: ${point.status === 'installed' ? 'green' :
+                                point.status === 'in_progress' ? 'orange' : 'red'};
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                border: 2px solid white;
+                ">
+                </div>`,
+                            className: '', // убираем дефолтные стили иконки
+                            iconSize: [16, 16],
+                            iconAnchor: [8, 8],
+                        });
 
-                            {point.status === 'in_progress' && (
-                                <div>
-                                    <label>Дата установки:</label>
-                                    <input
-                                        type="datetime-local"
-                                        value={installationDates[point.id] || ''}
-                                        onChange={(e) => handleStatusChange(point.id, 'in_progress', e.target.value)}
-                                    />
-                                </div>
-                            )}
-                            {point.installationDate && point.status === 'installed' && (
-                                <p>Дата установки: {point.installationDate}</p>
-                            )}
-                        </Popup>
-                    </CircleMarker>
-                ))}
+                        return (
+                            <Marker
+                                key={point.id}
+                                position={[point.lat, point.lng]}
+                                icon={icon}
+                                eventHandlers={{
+                                    click: () => {
+                                        setOpenPopupId(point.id);
+                                    }
+                                }}
+                            >
+                                <Popup
+                                    open={point.id === openPopupId}
+                                    onClose={() => setOpenPopupId(null)}
+                                >
+                                    {/* содержимое Popup */}
+                                    Точка #{point.id}<br />
+                                    Широта: {point.lat.toFixed(6)}<br />
+                                    Долгота: {point.lng.toFixed(6)}<br />
+                                    Статус:
+                                    <select
+                                        value={point.status}
+                                        onChange={(e) => {
+                                            const newStatus = e.target.value;
+                                            handleStatusChange(point.id, newStatus);
+                                            // Если статус не "in_progress", закрываем Popup
+                                            if (newStatus !== 'in_progress') {
+                                                setOpenPopupId(null);
+                                            }
+                                        }}
+                                    >
+                                        <option value="not_installed">Не установлена</option>
+                                        <option value="in_progress">В процессе установки</option>
+                                        <option value="installed">Установлена</option>
+                                    </select>
+
+                                    {point.status === 'in_progress' && (
+                                        <div>
+                                            <label>Дата установки:</label>
+                                            <input
+                                                type="date"
+                                                value={installationDates[point.id] || ''}
+                                                onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    handleStatusChange(point.id, 'in_progress', val);
+                                                    if (isFullYearEntered(val)) {
+                                                        setOpenPopupId(null);
+                                                    }
+                                                }}
+                                            />
+                                        </div>
+                                    )}
+
+
+                                    {point.installationDate && point.status === 'installed' && (
+                                        <p>Дата установки: {point.installationDate}</p>
+                                    )}
+                                </Popup>
+                            </Marker>
+
+                        );
+                    })}
+                </MarkerClusterGroup>
+
 
             </MapContainer>
         </div>
