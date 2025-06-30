@@ -20,7 +20,60 @@ function AddPointOnClick({ addPoint, active }) {
     return null;
 }
 
+function LoginForm({ onLogin }) {
+    const [username, setLogin] = useState('');
+    const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        fetch('http://localhost:4000/login', { // адрес вашего бэкенда
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+        })
+            .then(res => {
+                if (!res.ok) throw new Error('Неверный логин или пароль');
+                return res.json();
+            })
+            .then(data => {
+                localStorage.setItem('token', data.token);
+                setError('');
+                onLogin(data.token);
+            })
+            .catch(err => setError(err.message));
+    };
+
+    return (
+        <div style={{ maxWidth: 300, margin: '100px auto', padding: 20, border: '1px solid #ccc', borderRadius: 8 }}>
+            <h3>Вход</h3>
+            <form onSubmit={handleSubmit}>
+                <input
+                    type="text"
+                    placeholder="Логин"
+                    value={username}
+                    onChange={e => setLogin(e.target.value)}
+                    required
+                    style={{ width: '100%', marginBottom: 10, padding: 8 }}
+                />
+                <input
+                    type="password"
+                    placeholder="Пароль"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    required
+                    style={{ width: '100%', marginBottom: 10, padding: 8 }}
+                />
+                <button type="submit" style={{ width: '100%', padding: 8 }}>Войти</button>
+                {error && <p style={{ color: 'red' }}>{error}</p>}
+            </form>
+        </div>
+    );
+}
+
 function App() {
+    const [token, setToken] = useState(() => localStorage.getItem('token'));
+
     const position = [51.6720, 39.1843];
     const zoom = 12;
 
@@ -176,33 +229,69 @@ function App() {
         URL.revokeObjectURL(url);
     };
 
+    const handleLogout = () => {
+        localStorage.removeItem('token');
+        setToken(null);
+    };
+
+    if (!token) {
+        return <LoginForm onLogin={setToken} />;
+    }
+
     return (
-        <div className="App" style={{ height: '100vh', width: '100vw', position: 'relative' }}>
+
+        <div className="App" style={{height: '100vh', width: '100vw', position: 'relative'}}>
+            <button
+                onClick={handleLogout}
+                style={{
+                    position: 'absolute',
+                    top: 10,
+                    right: 65,
+                    zIndex: 1000,
+                    padding: '6px 12px',
+                    backgroundColor: 'white',
+                    border: '1px solid #ccc',
+                    cursor: 'pointer',
+                    color: "red",
+                    borderRadius: '4px',
+                    fontSize: 16
+                }}
+            >
+                Выйти
+            </button>
             <div style={{
                 position: 'absolute', top: 10, left: 50, zIndex: 1000, backgroundColor: 'white', padding: '8px',
                 border: '1px solid #ccc', borderRadius: '4px', display: 'flex', gap: '16px'
             }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'red' }}></div>
+                <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                    <div style={{width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'red'}}></div>
                     Не установлены
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'orange' }}></div>
+                <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                    <div style={{width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'orange'}}></div>
                     В процессе установки
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'green' }}></div>
+                <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                    <div style={{width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'green'}}></div>
                     Установлены
                 </div>
             </div>
 
-            <div style={{ position: 'absolute', bottom: 10, left: 10, zIndex: 1000, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{
+                position: 'absolute',
+                bottom: 10,
+                left: 10,
+                zIndex: 1000,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px'
+            }}>
                 <input
                     type="file"
                     accept=".csv"
                     multiple
                     onChange={handleFileUpload}
-                    style={{ cursor: 'pointer' }}
+                    style={{cursor: 'pointer'}}
                 />
 
                 <button
@@ -229,7 +318,8 @@ function App() {
                 </button>
             </div>
 
-            <MapContainer center={position} zoom={zoom} maxZoom={18} scrollWheelZoom={true} style={{ height: '100%', width: '100%' }}>
+            <MapContainer center={position} zoom={zoom} maxZoom={18} scrollWheelZoom={true}
+                          style={{height: '100%', width: '100%'}}>
                 <LayersControl position="topright">
                     <BaseLayer checked name="OpenStreetMap">
                         <TileLayer
@@ -253,7 +343,7 @@ function App() {
                     </BaseLayer>
                 </LayersControl>
 
-                <AddPointOnClick addPoint={addPoint} active={addMode} />
+                <AddPointOnClick addPoint={addPoint} active={addMode}/>
 
                 <MarkerClusterGroup
                     maxClusterRadius={40}>
@@ -290,9 +380,9 @@ function App() {
                                     onClose={() => setOpenPopupId(null)}
                                 >
                                     {/* содержимое Popup */}
-                                    Точка #{point.id}<br />
-                                    Широта: {point.lat.toFixed(6)}<br />
-                                    Долгота: {point.lng.toFixed(6)}<br />
+                                    Точка #{point.id}<br/>
+                                    Широта: {point.lat.toFixed(6)}<br/>
+                                    Долгота: {point.lng.toFixed(6)}<br/>
                                     Статус:
                                     <select
                                         value={point.status}
