@@ -54,7 +54,7 @@ function LoginForm({ onLogin }) {
                     value={username}
                     onChange={e => setLogin(e.target.value)}
                     required
-                    style={{ width: '100%', marginBottom: 10, padding: 8 }}
+                    style={{ width: '94%', marginBottom: 10, padding: 8 }}
                 />
                 <input
                     type="password"
@@ -62,7 +62,7 @@ function LoginForm({ onLogin }) {
                     value={password}
                     onChange={e => setPassword(e.target.value)}
                     required
-                    style={{ width: '100%', marginBottom: 10, padding: 8 }}
+                    style={{ width: '94%', marginBottom: 10, padding: 8 }}
                 />
                 <button type="submit" style={{ width: '100%', padding: 8 }}>Войти</button>
                 {error && <p style={{ color: 'red' }}>{error}</p>}
@@ -229,10 +229,122 @@ function App() {
         URL.revokeObjectURL(url);
     };
 
+    const savePointsToServer = () => {
+        if (points.length === 0) {
+            alert('Нет точек для сохранения');
+            return;
+        }
+
+        const token = localStorage.getItem('token');
+        if (!token) {
+            alert('Пожалуйста, войдите в систему');
+            return;
+        }
+
+        fetch('http://localhost:4000/points', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + token,
+            },
+            body: JSON.stringify({ points }),
+        })
+            .then(res => {
+                if (!res.ok) {
+                    throw new Error('Ошибка при сохранении точек');
+                }
+                return res.json();
+            })
+            .then(data => {
+                alert(data.message);
+            })
+            .catch(err => {
+                console.error(err);
+                alert('Ошибка при сохранении точек: ' + err.message);
+            });
+    };
+
+    const loadPointsFromServer = () => {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+
+        fetch('http://localhost:4000/points', {
+            headers: {
+                'Authorization': 'Bearer ' + token,
+            }
+        })
+            .then(res => {
+                if (!res.ok) throw new Error('Ошибка загрузки точек');
+                return res.json();
+            })
+            .then(data => {
+                if (Array.isArray(data.points)) {
+                    // Добавим id, статус и дату в состояние
+                    const loadedPoints = data.points.map(p => ({
+                        id: p.id,
+                        lat: p.lat,
+                        lng: p.lng,
+                        status: p.status || 'not_installed',
+                        installationDate: p.installationDate || null,
+                    }));
+
+                    setPoints(loadedPoints);
+
+                    const loadedStatuses = {};
+                    const loadedInstallationDates = {};
+                    loadedPoints.forEach(p => {
+                        loadedStatuses[p.id] = p.status;
+                        loadedInstallationDates[p.id] = p.installationDate;
+                    });
+                    setStatuses(loadedStatuses);
+                    setInstallationDates(loadedInstallationDates);
+
+                    // Обновим nextId, чтобы не было конфликтов
+                    nextId.current = loadedPoints.reduce((maxId, p) => Math.max(maxId, p.id), 0) + 1;
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert('Ошибка загрузки точек: ' + err.message);
+            });
+    };
+
+    useEffect(() => {
+        if (token) {
+            loadPointsFromServer();
+        }
+    }, [token]);
+
+
     const handleLogout = () => {
         localStorage.removeItem('token');
         setToken(null);
+        setPoints([]);
+        setStatuses({});
+        setInstallationDates({});
+        nextId.current = 1;
     };
+
+    async function clearPointsOnServer() {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+
+        try {
+            const res = await fetch('http://localhost:4000/points', {
+                method: 'DELETE',
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+
+            if (!res.ok) throw new Error('Ошибка удаления точек');
+
+            setPoints([]);
+            setStatuses({});
+            setInstallationDates({});
+        } catch (err) {
+            alert(err.message);
+        }
+    }
+
 
     if (!token) {
         return <LoginForm onLogin={setToken} />;
@@ -316,13 +428,37 @@ function App() {
                 >
                     Сохранить точки
                 </button>
+                <button
+                    onClick={savePointsToServer}
+                    style={{
+                        padding: '6px 12px',
+                        backgroundColor: 'white',
+                        border: '1px solid #ccc',
+                        cursor: 'pointer',
+                    }}
+                >
+                    Сохранить точки на сервер
+                </button>
+                <button
+                    onClick={clearPointsOnServer}
+                    style={{
+                        padding: '6px 12px',
+                        backgroundColor: 'white',
+                        border: '1px solid #ccc',
+                        cursor: 'pointer',
+                        marginLeft: '8px',
+                    }}
+                >
+                    Очистить карту
+                </button>
+
             </div>
 
             <MapContainer center={position} zoom={zoom} maxZoom={18} scrollWheelZoom={true}
                           style={{height: '100%', width: '100%'}}>
                 <LayersControl position="topright">
                     <BaseLayer checked name="OpenStreetMap">
-                        <TileLayer
+                    <TileLayer
                             attribution='&copy; OpenStreetMap contributors'
                             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                         />

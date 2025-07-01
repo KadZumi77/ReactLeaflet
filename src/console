@@ -1,0 +1,9 @@
+CREATE TABLE points (
+    id SERIAL PRIMARY KEY,
+    lat DOUBLE PRECISION NOT NULL,
+    lng DOUBLE PRECISION NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'not_installed',
+    installation_date DATE NULL,
+    user_id INTEGER NOT NULL, -- если хотите хранить, кто добавил точку
+    created_at TIMESTAMP DEFAULT NOW()
+);
