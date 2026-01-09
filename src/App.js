@@ -85,7 +85,10 @@ function App() {
     const [statuses, setStatuses] = useState({});
     const [uploadedFileNames, setUploadedFileNames] = useState([]);
     const [installationDates, setInstallationDates] = useState({});
+    const [adTypes, setAdTypes] = useState({}); // 'На столбах' или 'На билбордах'
+    const [placementPeriods, setPlacementPeriods] = useState({}); // срок размещения
     const [openPopupId, setOpenPopupId] = useState(null);
+    const [isDirectoryOpen, setIsDirectoryOpen] = useState(false);
 
     const handleFileUpload = useCallback((event) => {
         const files = Array.from(event.target.files); // Get an array of files
@@ -106,6 +109,8 @@ function App() {
                             lng: parseFloat(row.LNG),
                             status: row.STATUS || 'not_installed',  // Read status from CSV, default to 'not_installed'
                             installationDate: row.INSTALLATION_DATE || null,
+                            adType: row.AD_TYPE || 'На столбах',
+                            placementPeriod: row.PLACEMENT_PERIOD || '',
                         })).filter(p => !isNaN(p.lat) && !isNaN(p.lng));
                         resolve(parsedPoints);
                     },
@@ -126,6 +131,8 @@ function App() {
                     lng: p.lng,
                     status: p.status,
                     installationDate: p.installationDate,
+                    adType: p.adType || 'На столбах',
+                    placementPeriod: p.placementPeriod || '',
                 }));
                 nextId.current += numberedPoints.length;
 
@@ -134,12 +141,18 @@ function App() {
                 // Initialize statuses
                 const initialStatuses = {};
                 const initialInstallationDates = {};
+                const initialAdTypes = {};
+                const initialPlacementPeriods = {};
                 numberedPoints.forEach(point => {
                     initialStatuses[point.id] = point.status || 'not_installed';
                     initialInstallationDates[point.id] = point.installationDate || null;
+                    initialAdTypes[point.id] = point.adType || 'На столбах';
+                    initialPlacementPeriods[point.id] = point.placementPeriod || '';
                 });
                 setStatuses(prevStatuses => ({ ...prevStatuses, ...initialStatuses }));
                 setInstallationDates(initialInstallationDates);
+                setAdTypes(prevAdTypes => ({ ...prevAdTypes, ...initialAdTypes }));
+                setPlacementPeriods(prevPlacementPeriods => ({ ...prevPlacementPeriods, ...initialPlacementPeriods }));
             })
             .catch(error => {
                 console.error('Ошибка при обработке файлов:', error);
@@ -148,9 +161,18 @@ function App() {
 
 
     const addPoint = (latlng) => {
-        const newPoint = { id: nextId.current++, lat: latlng.lat, lng: latlng.lng, status: 'not_installed' };
+        const newPoint = { 
+            id: nextId.current++, 
+            lat: latlng.lat, 
+            lng: latlng.lng, 
+            status: 'not_installed',
+            adType: 'На столбах',
+            placementPeriod: ''
+        };
         setPoints(prev => [...prev, newPoint]);
         setStatuses(prev => ({ ...prev, [newPoint.id]: 'not_installed' }));
+        setAdTypes(prev => ({ ...prev, [newPoint.id]: 'На столбах' }));
+        setPlacementPeriods(prev => ({ ...prev, [newPoint.id]: '' }));
     };
 
     // При изменении points пересчитаем id, чтобы нумерация была последовательной
@@ -195,6 +217,36 @@ function App() {
         );
     }, []);
 
+    const handleAdTypeChange = useCallback((id, newAdType) => {
+        setAdTypes(prev => ({ ...prev, [id]: newAdType }));
+        setPoints(prevPoints =>
+            prevPoints.map(point => {
+                if (point.id === id) {
+                    return {
+                        ...point,
+                        adType: newAdType,
+                    };
+                }
+                return point;
+            })
+        );
+    }, []);
+
+    const handlePlacementPeriodChange = useCallback((id, newPeriod) => {
+        setPlacementPeriods(prev => ({ ...prev, [id]: newPeriod }));
+        setPoints(prevPoints =>
+            prevPoints.map(point => {
+                if (point.id === id) {
+                    return {
+                        ...point,
+                        placementPeriod: newPeriod,
+                    };
+                }
+                return point;
+            })
+        );
+    }, []);
+
     const isFullYearEntered = (dateStr) => {
         if (!dateStr || dateStr.length !== 10) return false;
         const regex = /^\d{4}-\d{2}-\d{2}$/;
@@ -208,13 +260,15 @@ function App() {
             return;
         }
         const csvData = Papa.unparse({
-            fields: ['ROWNUM', 'LAT', 'LNG', 'STATUS', 'INSTALLATION_DATE'],
+            fields: ['ROWNUM', 'LAT', 'LNG', 'STATUS', 'INSTALLATION_DATE', 'AD_TYPE', 'PLACEMENT_PERIOD'],
             data: points.map(p => ({
                 ROWNUM: p.id,
                 LAT: p.lat,
                 LNG: p.lng,
                 STATUS: p.status,
                 INSTALLATION_DATE: p.installationDate || '',
+                AD_TYPE: p.adType || 'На столбах',
+                PLACEMENT_PERIOD: p.placementPeriod || '',
             }))
         }, { delimiter: ';' });
 
@@ -286,18 +340,26 @@ function App() {
                         lng: p.lng,
                         status: p.status || 'not_installed',
                         installationDate: p.installationDate || null,
+                        adType: p.adType || 'На столбах',
+                        placementPeriod: p.placementPeriod || '',
                     }));
 
                     setPoints(loadedPoints);
 
                     const loadedStatuses = {};
                     const loadedInstallationDates = {};
+                    const loadedAdTypes = {};
+                    const loadedPlacementPeriods = {};
                     loadedPoints.forEach(p => {
                         loadedStatuses[p.id] = p.status;
                         loadedInstallationDates[p.id] = p.installationDate;
+                        loadedAdTypes[p.id] = p.adType || 'На столбах';
+                        loadedPlacementPeriods[p.id] = p.placementPeriod || '';
                     });
                     setStatuses(loadedStatuses);
                     setInstallationDates(loadedInstallationDates);
+                    setAdTypes(loadedAdTypes);
+                    setPlacementPeriods(loadedPlacementPeriods);
 
                     // Обновим nextId, чтобы не было конфликтов
                     nextId.current = loadedPoints.reduce((maxId, p) => Math.max(maxId, p.id), 0) + 1;
@@ -322,6 +384,8 @@ function App() {
         setPoints([]);
         setStatuses({});
         setInstallationDates({});
+        setAdTypes({});
+        setPlacementPeriods({});
         nextId.current = 1;
     };
 
@@ -337,12 +401,126 @@ function App() {
 
             if (!res.ok) throw new Error('Ошибка удаления точек');
 
+            // Очищаем все состояния, включая точки добавленные вручную
             setPoints([]);
             setStatuses({});
             setInstallationDates({});
+            setAdTypes({});
+            setPlacementPeriods({});
+            setUploadedFileNames([]);
+            nextId.current = 1;
+            setAddMode(false);
         } catch (err) {
             alert(err.message);
         }
+    }
+
+    const getStatusText = (status) => {
+        const statusMap = {
+            'not_installed': 'Не установлена',
+            'in_progress': 'В процессе установки',
+            'installed': 'Установлена'
+        };
+        return statusMap[status] || status;
+    }
+
+    function DirectoryModal({ points, isOpen, onClose }) {
+        if (!isOpen) return null;
+
+        return (
+            <div
+                style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    zIndex: 2000,
+                }}
+                onClick={onClose}
+            >
+                <div
+                    style={{
+                        backgroundColor: 'white',
+                        borderRadius: '8px',
+                        maxWidth: '90%',
+                        maxHeight: '90%',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        position: 'relative',
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <div style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center', 
+                        padding: '20px',
+                        borderBottom: '1px solid #ddd',
+                        position: 'sticky',
+                        top: 0,
+                        backgroundColor: 'white',
+                        zIndex: 10,
+                        borderRadius: '8px 8px 0 0'
+                    }}>
+                        <h2 style={{ margin: 0 }}>Справочник реклам</h2>
+                        <button
+                            onClick={onClose}
+                            style={{
+                                background: 'none',
+                                border: 'none',
+                                fontSize: '24px',
+                                cursor: 'pointer',
+                                color: '#666',
+                                padding: '0 10px',
+                            }}
+                        >
+                            ×
+                        </button>
+                    </div>
+                    <div style={{ 
+                        overflow: 'auto', 
+                        padding: '0 20px 20px 20px',
+                        flex: 1
+                    }}>
+                        {points.length === 0 ? (
+                            <p style={{ padding: '20px 0' }}>Нет точек на карте</p>
+                        ) : (
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                                <thead style={{ position: 'sticky', top: 0, zIndex: 5 }}>
+                                    <tr style={{ backgroundColor: '#f5f5f5' }}>
+                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>ROWNUM</th>
+                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>LAT</th>
+                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>LNG</th>
+                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>STATUS</th>
+                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>INSTALLATION_DATE</th>
+                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>AD_TYPE</th>
+                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>PLACEMENT_PERIOD</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {points.map((point) => (
+                                        <tr key={point.id}>
+                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.id}</td>
+                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.lat.toFixed(6)}</td>
+                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.lng.toFixed(6)}</td>
+                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{getStatusText(point.status)}</td>
+                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.installationDate || ''}</td>
+                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.adType || 'На столбах'}</td>
+                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.placementPeriod || ''}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
     }
 
 
@@ -353,6 +531,24 @@ function App() {
     return (
 
         <div className="App" style={{height: '100vh', width: '100vw', position: 'relative'}}>
+            <button
+                onClick={() => setIsDirectoryOpen(true)}
+                style={{
+                    position: 'absolute',
+                    top: 10,
+                    right: 150,
+                    zIndex: 1000,
+                    padding: '6px 12px',
+                    backgroundColor: 'white',
+                    border: '1px solid #ccc',
+                    cursor: 'pointer',
+                    color: "#333",
+                    borderRadius: '4px',
+                    fontSize: 16
+                }}
+            >
+                Справочник реклам
+            </button>
             <button
                 onClick={handleLogout}
                 style={{
@@ -371,6 +567,11 @@ function App() {
             >
                 Выйти
             </button>
+            <DirectoryModal
+                points={points}
+                isOpen={isDirectoryOpen}
+                onClose={() => setIsDirectoryOpen(false)}
+            />
             <div style={{
                 position: 'absolute', top: 10, left: 50, zIndex: 1000, backgroundColor: 'white', padding: '8px',
                 border: '1px solid #ccc', borderRadius: '4px', display: 'flex', gap: '16px'
@@ -557,6 +758,48 @@ function App() {
                                     {point.installationDate && point.status === 'installed' && (
                                         <p>Дата установки: {point.installationDate}</p>
                                     )}
+                                    <br/>
+                                    <label>Тип рекламы:</label>
+                                    <select
+                                        value={point.adType || 'На столбах'}
+                                        onChange={(e) => {
+                                            handleAdTypeChange(point.id, e.target.value);
+                                        }}
+                                        style={{ width: '100%', marginTop: '5px' }}
+                                    >
+                                        <option value="На столбах">На столбах</option>
+                                        <option value="На билбордах">На билбордах</option>
+                                    </select>
+                                    <br/>
+                                    <label>Срок размещения:</label>
+                                    <div style={{ display: 'flex', gap: '5px', marginTop: '5px', alignItems: 'center' }}>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            placeholder="Число"
+                                            value={point.placementPeriod ? point.placementPeriod.split(' ')[0] || '' : ''}
+                                            onChange={(e) => {
+                                                const number = e.target.value;
+                                                const unit = point.placementPeriod ? point.placementPeriod.split(' ')[1] || 'дней' : 'дней';
+                                                handlePlacementPeriodChange(point.id, number ? `${number} ${unit}` : '');
+                                            }}
+                                            style={{ width: '60px', padding: '4px' }}
+                                        />
+                                        <select
+                                            value={point.placementPeriod ? point.placementPeriod.split(' ')[1] || 'дней' : 'дней'}
+                                            onChange={(e) => {
+                                                const unit = e.target.value;
+                                                const number = point.placementPeriod ? point.placementPeriod.split(' ')[0] || '' : '';
+                                                handlePlacementPeriodChange(point.id, number ? `${number} ${unit}` : '');
+                                            }}
+                                            style={{ padding: '4px' }}
+                                        >
+                                            <option value="дней">дней</option>
+                                            <option value="недель">недель</option>
+                                            <option value="месяцев">месяцев</option>
+                                            <option value="лет">лет</option>
+                                        </select>
+                                    </div>
                                 </Popup>
                             </Marker>
 
