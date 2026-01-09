@@ -80,6 +80,7 @@ function App() {
     const [points, setPoints] = useState([]);
     const [addMode, setAddMode] = useState(false);
     const nextId = useRef(1);
+    const hasLoadedPoints = useRef(false);
 
     // Состояния для флагов: 'not_installed', 'installed', 'in_progress'
     const [statuses, setStatuses] = useState({});
@@ -176,14 +177,18 @@ function App() {
     };
 
     // При изменении points пересчитаем id, чтобы нумерация была последовательной
+    // НЕ пересчитываем ID для точек, загруженных с сервера (они уже имеют правильные ID)
     useEffect(() => {
-        setPoints(prevPoints =>
-            prevPoints.map((p, index) => ({
-                ...p,
-                id: index + 1,
-            }))
-        );
-        nextId.current = points.length + 1;
+        // Пересчитываем ID только если точки НЕ были загружены с сервера
+        if (!hasLoadedPoints.current) {
+            setPoints(prevPoints =>
+                prevPoints.map((p, index) => ({
+                    ...p,
+                    id: index + 1,
+                }))
+            );
+            nextId.current = points.length + 1;
+        }
     }, [points.length]);
 
     const handleStatusChange = useCallback((id, newStatus, date) => {
@@ -318,10 +323,13 @@ function App() {
             });
     };
 
-    const loadPointsFromServer = () => {
+    const loadPointsFromServer = useCallback(() => {
         const token = localStorage.getItem('token');
-        if (!token) return;
+        if (!token || hasLoadedPoints.current) return;
 
+        // Устанавливаем флаг сразу, чтобы предотвратить повторные вызовы
+        hasLoadedPoints.current = true;
+        
         fetch('http://localhost:4000/points', {
             headers: {
                 'Authorization': 'Bearer ' + token,
@@ -344,6 +352,7 @@ function App() {
                         placementPeriod: p.placementPeriod || '',
                     }));
 
+                    // Заменяем все точки, а не добавляем к существующим
                     setPoints(loadedPoints);
 
                     const loadedStatuses = {};
@@ -363,19 +372,25 @@ function App() {
 
                     // Обновим nextId, чтобы не было конфликтов
                     nextId.current = loadedPoints.reduce((maxId, p) => Math.max(maxId, p.id), 0) + 1;
+                } else {
+                    // Если нет точек, сбрасываем флаг
+                    hasLoadedPoints.current = false;
                 }
             })
             .catch(err => {
                 console.error(err);
                 alert('Ошибка загрузки точек: ' + err.message);
+                hasLoadedPoints.current = false;
             });
-    };
+    }, []);
 
     useEffect(() => {
-        if (token) {
+        // Загружаем точки только один раз при наличии токена
+        if (token && !hasLoadedPoints.current) {
             loadPointsFromServer();
         }
-    }, [token]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [token]); // Убираем loadPointsFromServer из зависимостей, так как он стабилен благодаря useCallback
 
 
     const handleLogout = () => {
@@ -387,6 +402,7 @@ function App() {
         setAdTypes({});
         setPlacementPeriods({});
         nextId.current = 1;
+        hasLoadedPoints.current = false;
     };
 
     async function clearPointsOnServer() {

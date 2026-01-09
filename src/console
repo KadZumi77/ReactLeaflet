@@ -7,3 +7,8 @@ CREATE TABLE points (
     user_id INTEGER NOT NULL, -- если хотите хранить, кто добавил точку
     created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Добавление новых колонок для типа рекламы и срока размещения
+-- Выполните эти команды, если таблица уже создана:
+ALTER TABLE points ADD COLUMN IF NOT EXISTS ad_type VARCHAR(50) DEFAULT 'На столбах';
+ALTER TABLE points ADD COLUMN IF NOT EXISTS placement_period VARCHAR(100) NULL;
