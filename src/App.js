@@ -112,6 +112,7 @@ function App() {
                             installationDate: row.INSTALLATION_DATE || null,
                             adType: row.AD_TYPE || 'На столбах',
                             placementPeriod: row.PLACEMENT_PERIOD || '',
+                            photoUrl: row.PHOTO_URL || null,
                         })).filter(p => !isNaN(p.lat) && !isNaN(p.lng));
                         resolve(parsedPoints);
                     },
@@ -134,6 +135,7 @@ function App() {
                     installationDate: p.installationDate,
                     adType: p.adType || 'На столбах',
                     placementPeriod: p.placementPeriod || '',
+                    photoUrl: p.photoUrl || null,
                 }));
                 nextId.current += numberedPoints.length;
 
@@ -168,7 +170,8 @@ function App() {
             lng: latlng.lng, 
             status: 'not_installed',
             adType: 'На столбах',
-            placementPeriod: ''
+            placementPeriod: '',
+            photoUrl: null
         };
         setPoints(prev => [...prev, newPoint]);
         setStatuses(prev => ({ ...prev, [newPoint.id]: 'not_installed' }));
@@ -274,6 +277,7 @@ function App() {
                 INSTALLATION_DATE: p.installationDate || '',
                 AD_TYPE: p.adType || 'На столбах',
                 PLACEMENT_PERIOD: p.placementPeriod || '',
+                PHOTO_URL: p.photoUrl || '',
             }))
         }, { delimiter: ';' });
 
@@ -350,6 +354,7 @@ function App() {
                         installationDate: p.installationDate || null,
                         adType: p.adType || 'На столбах',
                         placementPeriod: p.placementPeriod || '',
+                        photoUrl: p.photoUrl || null,
                     }));
 
                     // Заменяем все точки, а не добавляем к существующим
@@ -440,6 +445,48 @@ function App() {
         return statusMap[status] || status;
     }
 
+    const handlePhotoUpload = useCallback(async (id, file) => {
+        if (!file) return;
+
+        const token = localStorage.getItem('token');
+        if (!token) {
+            alert('Пожалуйста, войдите в систему');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('photo', file);
+
+        try {
+            const res = await fetch('http://localhost:4000/upload', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + token,
+                },
+                body: formData,
+            });
+
+            if (!res.ok) {
+                const text = await res.text();
+                throw new Error(text || 'Ошибка при загрузке фото');
+            }
+
+            const data = await res.json();
+            if (!data.url) {
+                throw new Error('Сервер не вернул URL изображения');
+            }
+
+            setPoints(prevPoints =>
+                prevPoints.map(point =>
+                    point.id === id ? { ...point, photoUrl: data.url } : point
+                )
+            );
+        } catch (err) {
+            console.error(err);
+            alert('Ошибка при загрузке фото: ' + err.message);
+        }
+    }, []);
+
     function DirectoryModal({ points, isOpen, onClose }) {
         if (!isOpen) return null;
 
@@ -516,6 +563,7 @@ function App() {
                                         <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>INSTALLATION_DATE</th>
                                         <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>AD_TYPE</th>
                                         <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>PLACEMENT_PERIOD</th>
+                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>PHOTO_URL</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -528,6 +576,7 @@ function App() {
                                             <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.installationDate || ''}</td>
                                             <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.adType || 'На столбах'}</td>
                                             <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.placementPeriod || ''}</td>
+                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.photoUrl || ''}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -816,6 +865,28 @@ function App() {
                                             <option value="лет">лет</option>
                                         </select>
                                     </div>
+                                    <br/>
+                                    <label>Фото точки:</label>
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={(e) => {
+                                            const file = e.target.files && e.target.files[0];
+                                            if (file) {
+                                                handlePhotoUpload(point.id, file);
+                                            }
+                                        }}
+                                        style={{ marginTop: '5px', marginBottom: '5px' }}
+                                    />
+                                    {point.photoUrl && (
+                                        <div style={{ marginTop: '5px' }}>
+                                            <img
+                                                src={point.photoUrl}
+                                                alt={`Фото точки ${point.id}`}
+                                                style={{ maxWidth: '200px', maxHeight: '150px', display: 'block' }}
+                                            />
+                                        </div>
+                                    )}
                                 </Popup>
                             </Marker>
 
