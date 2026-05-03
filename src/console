@@ -12,3 +12,27 @@ CREATE TABLE points (
 -- Выполните эти команды, если таблица уже создана:
 ALTER TABLE points ADD COLUMN IF NOT EXISTS ad_type VARCHAR(50) DEFAULT 'На столбах';
 ALTER TABLE points ADD COLUMN IF NOT EXISTS placement_period VARCHAR(100) NULL;
+ALTER TABLE points ADD COLUMN IF NOT EXISTS photo_url TEXT NULL;
+
+-- Уведомления о скором окончании срока размещения (создаются также при старте server.js)
+-- Выполнять в базе leaflet (или той же БД, что в pool в server.js)
+CREATE TABLE IF NOT EXISTS placement_notifications (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    point_db_id INTEGER NOT NULL,
+    lat DOUBLE PRECISION NOT NULL,
+    lng DOUBLE PRECISION NOT NULL,
+    contract_end DATE NOT NULL,
+    alert_days_left SMALLINT NOT NULL CHECK (alert_days_left >= 0 AND alert_days_left <= 2),
+    message TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (user_id, point_db_id, contract_end, alert_days_left)
+);
+
+CREATE INDEX IF NOT EXISTS placement_notifications_user_id_idx
+    ON placement_notifications(user_id);
+
+-- Если ошибка вида «отношение users не существует» или нет внешнего ключа — сначала создайте users.
+-- Если таблица placement_notifications уже была без нужных столбцов:
+-- DROP TABLE IF EXISTS placement_notifications CASCADE;
+-- и снова выполните блок CREATE выше.

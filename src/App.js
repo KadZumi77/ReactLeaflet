@@ -1,5 +1,5 @@
 import React, {useState, useRef, useEffect, useCallback} from 'react';
-import { MapContainer, TileLayer, LayersControl, Marker, Popup, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, LayersControl, Marker, Popup, useMapEvents, useMap, AttributionControl } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import Papa from 'papaparse';
 import L from 'leaflet';
@@ -8,6 +8,28 @@ import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 
 const { BaseLayer } = LayersControl;
+
+/** Сегодняшняя дата в формате YYYY-MM-DD (локальный календарь) */
+function getLocalTodayIso() {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    const y = t.getFullYear();
+    const m = String(t.getMonth() + 1).padStart(2, '0');
+    const d = String(t.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+/** Сохраняет ссылку на Leaflet map для flyTo из модалок вне MapContainer */
+function MapRefBinder({ mapRef }) {
+    const map = useMap();
+    useEffect(() => {
+        mapRef.current = map;
+        return () => {
+            mapRef.current = null;
+        };
+    }, [map, mapRef]);
+    return null;
+}
 
 function AddPointOnClick({ addPoint, active }) {
     useMapEvents({
@@ -81,6 +103,8 @@ function App() {
     const [addMode, setAddMode] = useState(false);
     const nextId = useRef(1);
     const hasLoadedPoints = useRef(false);
+    const leafletMapRef = useRef(null);
+    const pointsRef = useRef([]);
 
     // Состояния для флагов: 'not_installed', 'installed', 'in_progress'
     const [statuses, setStatuses] = useState({});
@@ -90,6 +114,37 @@ function App() {
     const [placementPeriods, setPlacementPeriods] = useState({}); // срок размещения
     const [openPopupId, setOpenPopupId] = useState(null);
     const [isDirectoryOpen, setIsDirectoryOpen] = useState(false);
+    const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+    const [dbNotifications, setDbNotifications] = useState([]);
+
+    useEffect(() => {
+        pointsRef.current = points;
+    }, [points]);
+
+    const loadDbNotifications = useCallback(async () => {
+        const t = localStorage.getItem('token');
+        if (!t) return;
+        try {
+            const res = await fetch('http://localhost:4000/notifications', {
+                headers: { Authorization: `Bearer ${t}` },
+            });
+            if (!res.ok) return;
+            const data = await res.json();
+            setDbNotifications(Array.isArray(data.notifications) ? data.notifications : []);
+        } catch (e) {
+            console.warn('Не удалось загрузить уведомления', e);
+        }
+    }, []);
+
+    const focusPointFromNotification = useCallback(({ pointDbId, lat, lng }) => {
+        const map = leafletMapRef.current;
+        if (!map || lat == null || lng == null || Number.isNaN(Number(lat)) || Number.isNaN(Number(lng))) return;
+        const z = Math.max(map.getZoom(), 16);
+        map.flyTo([Number(lat), Number(lng)], z, { duration: 0.5 });
+        const match = pointsRef.current.find(x => Number(x.id) === Number(pointDbId));
+        setOpenPopupId(match ? pointDbId : null);
+        setIsNotificationsOpen(false);
+    }, []);
 
     const handleFileUpload = useCallback((event) => {
         const files = Array.from(event.target.files); // Get an array of files
@@ -164,10 +219,10 @@ function App() {
 
 
     const addPoint = (latlng) => {
-        const newPoint = { 
-            id: nextId.current++, 
-            lat: latlng.lat, 
-            lng: latlng.lng, 
+        const newPoint = {
+            id: nextId.current++,
+            lat: latlng.lat,
+            lng: latlng.lng,
             status: 'not_installed',
             adType: 'На столбах',
             placementPeriod: '',
@@ -195,33 +250,81 @@ function App() {
     }, [points.length]);
 
     const handleStatusChange = useCallback((id, newStatus, date) => {
-        setStatuses(prev => ({...prev, [id]: newStatus}));
+        setStatuses(prev => ({ ...prev, [id]: newStatus }));
 
-        // Update the installation date
-        if (newStatus === 'in_progress' && date) {
-            setInstallationDates(prevDates => ({
-                ...prevDates,
-                [id]: date,
-            }));
-        } else {
-            setInstallationDates(prevDates => ({
-                ...prevDates,
-                [id]: null, // Clear the date if status is not "in_progress"
-            }));
+        if (newStatus === 'not_installed') {
+            setInstallationDates(prev => ({ ...prev, [id]: null }));
+            setPoints(prevPoints =>
+                prevPoints.map(point =>
+                    point.id === id
+                        ? { ...point, status: newStatus, installationDate: null }
+                        : point
+                )
+            );
+            return;
         }
 
+        if (newStatus === 'in_progress') {
+            if (date) {
+                setInstallationDates(prev => ({ ...prev, [id]: date }));
+                setPoints(prevPoints =>
+                    prevPoints.map(point =>
+                        point.id === id
+                            ? {
+                                ...point,
+                                status: newStatus,
+                                installationDate: date,
+                            }
+                            : point
+                    )
+                );
+            } else {
+                setInstallationDates(prev => ({ ...prev, [id]: null }));
+                setPoints(prevPoints =>
+                    prevPoints.map(point =>
+                        point.id === id
+                            ? { ...point, status: newStatus, installationDate: null }
+                            : point
+                    )
+                );
+            }
+            return;
+        }
 
+        if (newStatus === 'installed') {
+            let resolvedInstallationDate = getLocalTodayIso();
+            setPoints(prevPoints => {
+                const target = prevPoints.find(p => p.id === id);
+                const trimmed =
+                    target?.installationDate != null
+                        ? String(target.installationDate).trim()
+                        : '';
+                resolvedInstallationDate = trimmed || getLocalTodayIso();
+                return prevPoints.map(point =>
+                    point.id === id
+                        ? {
+                            ...point,
+                            status: newStatus,
+                            installationDate: resolvedInstallationDate,
+                        }
+                        : point
+                );
+            });
+            setInstallationDates(prev => ({
+                ...prev,
+                [id]: resolvedInstallationDate,
+            }));
+        }
+    }, []);
+
+    /** Дата начала размещения (для уведомлений о сроке), в т.ч. при статусе «Установлена» */
+    const handleInstallationDateSet = useCallback((id, isoDate) => {
+        if (!isoDate) return;
+        setInstallationDates(prev => ({ ...prev, [id]: isoDate }));
         setPoints(prevPoints =>
-            prevPoints.map(point => {
-                if (point.id === id) {
-                    return {
-                        ...point,
-                        status: newStatus,
-                        installationDate: (newStatus === 'in_progress' && date) ? date : null, // store the date in points
-                    };
-                }
-                return point;
-            })
+            prevPoints.map(point =>
+                point.id === id ? { ...point, installationDate: isoDate } : point
+            )
         );
     }, []);
 
@@ -312,14 +415,22 @@ function App() {
             },
             body: JSON.stringify({ points }),
         })
-            .then(res => {
-                if (!res.ok) {
-                    throw new Error('Ошибка при сохранении точек');
+            .then(async res => {
+                let data = {};
+                try {
+                    data = await res.json();
+                } catch (_) {
+                    /* тело не JSON */
                 }
-                return res.json();
+                if (!res.ok) {
+                    const hint = data.error || data.message || res.statusText || 'Запрос отклонён';
+                    throw new Error(hint);
+                }
+                return data;
             })
             .then(data => {
                 alert(data.message);
+                loadDbNotifications();
             })
             .catch(err => {
                 console.error(err);
@@ -333,7 +444,7 @@ function App() {
 
         // Устанавливаем флаг сразу, чтобы предотвратить повторные вызовы
         hasLoadedPoints.current = true;
-        
+
         fetch('http://localhost:4000/points', {
             headers: {
                 'Authorization': 'Bearer ' + token,
@@ -377,6 +488,7 @@ function App() {
 
                     // Обновим nextId, чтобы не было конфликтов
                     nextId.current = loadedPoints.reduce((maxId, p) => Math.max(maxId, p.id), 0) + 1;
+                    loadDbNotifications();
                 } else {
                     // Если нет точек, сбрасываем флаг
                     hasLoadedPoints.current = false;
@@ -387,7 +499,7 @@ function App() {
                 alert('Ошибка загрузки точек: ' + err.message);
                 hasLoadedPoints.current = false;
             });
-    }, []);
+    }, [loadDbNotifications]);
 
     useEffect(() => {
         // Загружаем точки только один раз при наличии токена
@@ -406,6 +518,7 @@ function App() {
         setInstallationDates({});
         setAdTypes({});
         setPlacementPeriods({});
+        setDbNotifications([]);
         nextId.current = 1;
         hasLoadedPoints.current = false;
     };
@@ -428,15 +541,13 @@ function App() {
             setInstallationDates({});
             setAdTypes({});
             setPlacementPeriods({});
-            setUploadedFileNames([]);
-            nextId.current = 1;
+            setUploadedFileNames([]);            nextId.current = 1;
             setAddMode(false);
+            loadDbNotifications();
         } catch (err) {
             alert(err.message);
         }
-    }
-
-    const getStatusText = (status) => {
+    }    const getStatusText = (status) => {
         const statusMap = {
             'not_installed': 'Не установлена',
             'in_progress': 'В процессе установки',
@@ -487,6 +598,146 @@ function App() {
         }
     }, []);
 
+    function NotificationsModal({ items, isOpen, onClose, onFocusPoint }) {
+        if (!isOpen) return null;
+
+        return (
+            <div
+                role="presentation"
+                style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    zIndex: 2100,
+                }}
+                onClick={onClose}
+            >
+                <div
+                    style={{
+                        backgroundColor: 'white',
+                        borderRadius: '8px',
+                        width: 'min(420px, 92vw)',
+                        maxHeight: '80vh',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+                    }}
+                    onClick={e => e.stopPropagation()}
+                >
+                    <div
+                        style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '16px 20px',
+                            borderBottom: '1px solid #ddd',
+                        }}
+                    >
+                        <h2 style={{ margin: 0, fontSize: '18px' }}>Уведомления</h2>
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            style={{
+                                background: 'none',
+                                border: 'none',
+                                fontSize: '24px',
+                                cursor: 'pointer',
+                                color: '#666',
+                                padding: '0 8px',
+                                lineHeight: 1,
+                            }}
+                            aria-label="Закрыть"
+                        >
+                            ×
+                        </button>
+                    </div>
+                    <div style={{ overflow: 'auto', padding: '16px 20px' }}>
+                        {items.length === 0 ? (
+                            <p style={{ margin: 0, color: '#666', fontSize: '15px' }}>
+                                Пока нет записей. Напоминания появятся здесь после синхронизации с сервером и
+                                сохраняются в базе данных (историю видно после нового входа). Условие: статус
+                                «Установлена», указаны дата начала размещения и срок; за 2 календарных дня или
+                                меньше до окончания создаётся запись уведомления.
+                            </p>
+                        ) : (
+                            <ul
+                                style={{
+                                    margin: 0,
+                                    padding: 0,
+                                    listStyle: 'none',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '12px',
+                                }}
+                            >
+                                {items.map(n => {
+                                    const tail =
+                                        typeof n.message === 'string'
+                                            ? n.message.replace(
+                                                /^Срок размещения рекламы для точки №\d+\s+/,
+                                                ''
+                                            )
+                                            : '';
+                                    return (
+                                        <li
+                                            key={n.id}
+                                            style={{
+                                                padding: '12px 14px',
+                                                backgroundColor: '#f8f9fa',
+                                                borderRadius: '6px',
+                                                borderLeft: '4px solid #e67e22',
+                                                fontSize: '14px',
+                                                lineHeight: 1.45,
+                                                color: '#222',
+                                            }}
+                                        >
+                                            Срок размещения рекламы для точки{' '}
+                                            <button
+                                                type="button"
+                                                onClick={e => {
+                                                    e.stopPropagation();
+                                                    onFocusPoint({
+                                                        pointDbId: n.pointDbId,
+                                                        lat: n.lat,
+                                                        lng: n.lng,
+                                                    });
+                                                }}
+                                                style={{
+                                                    verticalAlign: 'baseline',
+                                                    padding: 0,
+                                                    margin: 0,
+                                                    border: 'none',
+                                                    background: 'none',
+                                                    color: '#1565c0',
+                                                    cursor: 'pointer',
+                                                    textDecoration: 'underline',
+                                                    font: 'inherit',
+                                                    fontWeight: 600,
+                                                }}
+                                                title="Показать точку на карте"
+                                                aria-label={`Перейти к точке №${n.pointDbId}`}
+                                            >
+                                                №{n.pointDbId}
+                                            </button>
+                                            {' '}
+                                            {tail}
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     function DirectoryModal({ points, isOpen, onClose }) {
         if (!isOpen) return null;
 
@@ -518,10 +769,10 @@ function App() {
                     }}
                     onClick={(e) => e.stopPropagation()}
                 >
-                    <div style={{ 
-                        display: 'flex', 
-                        justifyContent: 'space-between', 
-                        alignItems: 'center', 
+                    <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
                         padding: '20px',
                         borderBottom: '1px solid #ddd',
                         position: 'sticky',
@@ -545,8 +796,8 @@ function App() {
                             ×
                         </button>
                     </div>
-                    <div style={{ 
-                        overflow: 'auto', 
+                    <div style={{
+                        overflow: 'auto',
                         padding: '0 20px 20px 20px',
                         flex: 1
                     }}>
@@ -555,30 +806,30 @@ function App() {
                         ) : (
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                                 <thead style={{ position: 'sticky', top: 0, zIndex: 5 }}>
-                                    <tr style={{ backgroundColor: '#f5f5f5' }}>
-                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>ROWNUM</th>
-                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>LAT</th>
-                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>LNG</th>
-                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>STATUS</th>
-                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>INSTALLATION_DATE</th>
-                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>AD_TYPE</th>
-                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>PLACEMENT_PERIOD</th>
-                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>PHOTO_URL</th>
-                                    </tr>
+                                <tr style={{ backgroundColor: '#f5f5f5' }}>
+                                    <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>ROWNUM</th>
+                                    <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>LAT</th>
+                                    <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>LNG</th>
+                                    <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>STATUS</th>
+                                    <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>INSTALLATION_DATE</th>
+                                    <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>AD_TYPE</th>
+                                    <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>PLACEMENT_PERIOD</th>
+                                    <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', backgroundColor: '#f5f5f5' }}>PHOTO_URL</th>
+                                </tr>
                                 </thead>
                                 <tbody>
-                                    {points.map((point) => (
-                                        <tr key={point.id}>
-                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.id}</td>
-                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.lat.toFixed(6)}</td>
-                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.lng.toFixed(6)}</td>
-                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{getStatusText(point.status)}</td>
-                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.installationDate || ''}</td>
-                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.adType || 'На столбах'}</td>
-                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.placementPeriod || ''}</td>
-                                            <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.photoUrl || ''}</td>
-                                        </tr>
-                                    ))}
+                                {points.map((point) => (
+                                    <tr key={point.id}>
+                                        <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.id}</td>
+                                        <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.lat.toFixed(6)}</td>
+                                        <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.lng.toFixed(6)}</td>
+                                        <td style={{ padding: '10px', border: '1px solid #ddd' }}>{getStatusText(point.status)}</td>
+                                        <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.installationDate || ''}</td>
+                                        <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.adType || 'На столбах'}</td>
+                                        <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.placementPeriod || ''}</td>
+                                        <td style={{ padding: '10px', border: '1px solid #ddd' }}>{point.photoUrl || ''}</td>
+                                    </tr>
+                                ))}
                                 </tbody>
                             </table>
                         )}
@@ -597,48 +848,122 @@ function App() {
 
         <div className="App" style={{height: '100vh', width: '100vw', position: 'relative'}}>
             <button
+                type="button"
                 onClick={() => setIsDirectoryOpen(true)}
                 style={{
                     position: 'absolute',
                     top: 10,
-                    right: 150,
-                    zIndex: 1000,
+                    right: 218,
+                    zIndex: 2000,
                     padding: '6px 12px',
                     backgroundColor: 'white',
                     border: '1px solid #ccc',
                     cursor: 'pointer',
-                    color: "#333",
+                    color: '#333',
                     borderRadius: '4px',
-                    fontSize: 16
+                    fontSize: 16,
                 }}
             >
                 Справочник реклам
             </button>
             <button
+                type="button"
                 onClick={handleLogout}
                 style={{
                     position: 'absolute',
                     top: 10,
-                    right: 65,
-                    zIndex: 1000,
+                    right: 122,
+                    zIndex: 2000,
                     padding: '6px 12px',
                     backgroundColor: 'white',
                     border: '1px solid #ccc',
                     cursor: 'pointer',
-                    color: "red",
+                    color: 'red',
                     borderRadius: '4px',
-                    fontSize: 16
+                    fontSize: 16,
                 }}
             >
                 Выйти
             </button>
+            <button
+                type="button"
+                onClick={() => {
+                    loadDbNotifications();
+                    setIsNotificationsOpen(true);
+                }}
+                title="Уведомления о сроке размещения"
+                aria-label="Уведомления"
+                style={{
+                    position: 'absolute',
+                    top: 10,
+                    right: 70,
+                    zIndex: 2000,
+                    width: 44,
+                    height: 40,
+                    padding: 0,
+                    backgroundColor: 'white',
+                    border: '1px solid #ccc',
+                    cursor: 'pointer',
+                    borderRadius: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxSizing: 'border-box',
+                    color: '#333',
+                }}
+            >
+                <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {/* Иконка с svg4.ru (конверт / уведомления) */}
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 1024 1024"
+                        width="24"
+                        height="24"
+                        fill="currentColor"
+                        style={{ display: 'block', flexShrink: 0 }}
+                        aria-hidden="true"
+                    >
+                        <path d="M477.5 536.3L135.9 270.7l-27.5-21.4 27.6 21.5V792h752V270.8L546.2 536.3a55.99 55.99 0 0 1-68.7 0z" />
+                        <path d="M876.3 198.8l39.3 50.5-27.6 21.5 27.7-21.5-39.3-50.5z" />
+                        <path d="M928 160H96c-17.7 0-32 14.3-32 32v640c0 17.7 14.3 32 32 32h832c17.7 0 32-14.3 32-32V192c0-17.7-14.3-32-32-32zm-94.5 72.1L512 482 190.5 232.1h643zm54.5 38.7V792H136V270.8l-27.6-21.5 27.5 21.4 341.6 265.6a55.99 55.99 0 0 0 68.7 0L888 270.8l27.6-21.5-39.3-50.5h.1l39.3 50.5-27.7 21.5z" />
+                    </svg>
+                    {dbNotifications.length > 0 && (
+                        <span
+                            style={{
+                                position: 'absolute',
+                                top: -8,
+                                right: -10,
+                                minWidth: 18,
+                                height: 18,
+                                padding: '0 4px',
+                                borderRadius: '9px',
+                                backgroundColor: '#e74c3c',
+                                color: '#fff',
+                                fontSize: 11,
+                                fontWeight: 700,
+                                lineHeight: '18px',
+                                textAlign: 'center',
+                                boxSizing: 'border-box',
+                            }}
+                        >
+                            {dbNotifications.length > 9 ? '9+' : dbNotifications.length}
+                        </span>
+                    )}
+                </span>
+            </button>
+            <NotificationsModal
+                items={dbNotifications}
+                isOpen={isNotificationsOpen}
+                onClose={() => setIsNotificationsOpen(false)}
+                onFocusPoint={focusPointFromNotification}
+            />
             <DirectoryModal
                 points={points}
                 isOpen={isDirectoryOpen}
                 onClose={() => setIsDirectoryOpen(false)}
             />
             <div style={{
-                position: 'absolute', top: 10, left: 50, zIndex: 1000, backgroundColor: 'white', padding: '8px',
+                position: 'absolute', top: 10, left: 50, zIndex: 2000, backgroundColor: 'white', padding: '8px',
                 border: '1px solid #ccc', borderRadius: '4px', display: 'flex', gap: '16px'
             }}>
                 <div style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
@@ -659,7 +984,7 @@ function App() {
                 position: 'absolute',
                 bottom: 10,
                 left: 10,
-                zIndex: 1000,
+                zIndex: 2000,
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '8px'
@@ -720,11 +1045,18 @@ function App() {
 
             </div>
 
-            <MapContainer center={position} zoom={zoom} maxZoom={18} scrollWheelZoom={true}
-                          style={{height: '100%', width: '100%'}}>
+            <MapContainer
+                center={position}
+                zoom={zoom}
+                maxZoom={18}
+                scrollWheelZoom={true}
+                attributionControl={false}
+                style={{ height: '100%', width: '100%' }}
+            >
+                <AttributionControl position="bottomright" prefix={false} />
                 <LayersControl position="topright">
                     <BaseLayer checked name="OpenStreetMap">
-                    <TileLayer
+                        <TileLayer
                             attribution='&copy; OpenStreetMap contributors'
                             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                         />
@@ -746,6 +1078,7 @@ function App() {
                 </LayersControl>
 
                 <AddPointOnClick addPoint={addPoint} active={addMode}/>
+                <MapRefBinder mapRef={leafletMapRef} />
 
                 <MarkerClusterGroup
                     maxClusterRadius={40}>
@@ -807,7 +1140,11 @@ function App() {
                                             <label>Дата установки:</label>
                                             <input
                                                 type="date"
-                                                value={installationDates[point.id] || ''}
+                                                value={
+                                                    installationDates[point.id] ||
+                                                    point.installationDate ||
+                                                    ''
+                                                }
                                                 onChange={(e) => {
                                                     const val = e.target.value;
                                                     handleStatusChange(point.id, 'in_progress', val);
@@ -819,9 +1156,22 @@ function App() {
                                         </div>
                                     )}
 
-
-                                    {point.installationDate && point.status === 'installed' && (
-                                        <p>Дата установки: {point.installationDate}</p>
+                                    {point.status === 'installed' && (
+                                        <div style={{ marginTop: '6px' }}>
+                                            <label>Дата начала размещения (для срока и уведомлений):</label>
+                                            <input
+                                                type="date"
+                                                value={
+                                                    point.installationDate ||
+                                                    installationDates[point.id] ||
+                                                    ''
+                                                }
+                                                onChange={(e) => {
+                                                    handleInstallationDateSet(point.id, e.target.value);
+                                                }}
+                                                style={{ display: 'block', marginTop: '4px' }}
+                                            />
+                                        </div>
                                     )}
                                     <br/>
                                     <label>Тип рекламы:</label>
