@@ -880,11 +880,27 @@ function App() {
                                     />
                                     {point.photoUrl && (
                                         <div style={{ marginTop: '5px' }}>
-                                            <img
-                                                src={point.photoUrl}
-                                                alt={`Фото точки ${point.id}`}
-                                                style={{ maxWidth: '200px', maxHeight: '150px', display: 'block' }}
-                                            />
+                                            <a
+                                                href={point.photoUrl}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                style={{ textDecoration: 'none', color: 'inherit', cursor: 'pointer' }}
+                                            >
+                                                <img
+                                                    src={point.photoUrl}
+                                                    alt={`Фото точки ${point.id}`}
+                                                    style={{
+                                                        maxWidth: '200px',
+                                                        maxHeight: '150px',
+                                                        display: 'block',
+                                                        borderRadius: 4,
+                                                        border: '1px solid #ccc',
+                                                    }}
+                                                />
+                                                <span style={{ fontSize: '12px', color: '#555' }}>
+                                                    Открыть фото в новой вкладке
+                                                </span>
+                                            </a>
                                         </div>
                                     )}
                                 </Popup>
